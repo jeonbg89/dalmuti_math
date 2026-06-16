@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>디딤돌 연산</title>
+<!-- iPad 홈 화면 추가용(PWA) -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="디딤돌 연산" />
+<meta name="theme-color" content="#2E6F5E" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%232E6F5E'/%3E%3Ctext x='50%25' y='54%25' font-size='96' font-family='sans-serif' font-weight='900' fill='white' text-anchor='middle' dominant-baseline='middle'%3E디%3C/text%3E%3C/svg%3E" />
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22%EB%94%94%EB%94%A4%EB%8F%8C%20%EC%97%B0%EC%82%B0%22%2C%22short_name%22%3A%22%EB%94%94%EB%94%A4%EB%8F%8C%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23F4F2EB%22%2C%22theme_color%22%3A%22%232E6F5E%22%7D" />
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+<style>
+  html,body,#root{height:100%;margin:0}
+  body{background:#F4F2EB;-webkit-text-size-adjust:100%}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  button{font-family:inherit}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+/* ════════════════ 배포 설정 (여기만 채우면 됩니다) ════════════════
+   1) Apps Script 웹앱 배포 후 받은 URL을 API 에 붙여넣기
+   2) Code.gs 에서 토큰을 켰다면 같은 값을 TOKEN 에 입력 (안 켰으면 빈칸)        */
+const CONFIG = {
+  API: "https://script.google.com/macros/s/AKfycbwAs6_nHkqs9aRLG4C63sr3-J_WeMGmUFv11K84tooThHbfob_8SCxaxNVTohBIjRE/exec",      // 예: "https://script.google.com/macros/s/AKfy.../exec"
+  TOKEN: "",    // 예: "galdam2026"  (Code.gs 와 동일하게)
+};
+
+/* ════════════════ 디자인 토큰 ════════════════ */
+const C = {
+  paper: "#F4F2EB", card: "#FFFFFF", ink: "#221F18", sub: "#736E62",
+  brand: "#2E6F5E", brandDk: "#225447", brandSoft: "#E2EFE9",
+  gold: "#D7972B", goldDk: "#B57C1C", goldSoft: "#F8EFD9",
+  ok: "#2E9E5B", okSoft: "#E5F4EB", no: "#CF5A4F", noSoft: "#FBEAE6",
+  blue: "#3F6BD6", purple: "#6A4FA3", brown: "#9A6B3F", stone: "#8A8276", rose: "#B5567E",
+  line: "#E7E2D5", track: "#ECE8DD", key: "#FBFAF5", keyLine: "#E2DCCD",
+};
+const FONT = '"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif';
+const km = (n) => Math.round(n || 0).toLocaleString("ko-KR");
+
+/* ════════════════ 수학 헬퍼 & 단계 엔진 ════════════════ */
+const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b]; } return a || 1; };
+const lcm = (a, b) => (a / gcd(a, b)) * b;
+const reduce = (n, d) => { const s = d < 0 ? -1 : 1; n *= s; d *= s; const g = gcd(n, d) || 1; return { n: n / g, d: d / g }; };
+const ri = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const r1 = (x) => Math.round(x * 10) / 10;
+const N = (v) => ({ t: "num", v }), OP = (v) => ({ t: "op", v }), FR = (n, d) => ({ t: "frac", n, d }), TX = (v) => ({ t: "txt", v });
+
+const STAGES = [
+  { id: "mix", g: 5, name: "자연수의 혼합 계산", ex: "27 + 8 × 4", make() { const f = pick([
+    () => { const a = ri(2, 9), b = ri(2, 9), c = ri(2, 30); return { tk: [N(c), OP("+"), N(a), OP("×"), N(b)], ans: c + a * b }; },
+    () => { const a = ri(2, 9), b = ri(2, 9), c = ri(a * b + 1, 90); return { tk: [N(c), OP("−"), N(a), OP("×"), N(b)], ans: c - a * b }; },
+    () => { const b = ri(2, 9), q = ri(2, 9), c = ri(2, 30); return { tk: [N(b * q), OP("÷"), N(b), OP("+"), N(c)], ans: q + c }; }]);
+    const r = f(); return { tokens: r.tk, kind: "int", ans: r.ans }; } },
+  { id: "gcd", g: 5, name: "최대공약수", ex: "24와 36", make() { const m = ri(2, 9), p = ri(2, 7), q = ri(2, 7), a = m * p, b = m * q; return { tokens: [N(a), TX("와"), N(b), TX("의 최대공약수")], kind: "int", ans: gcd(a, b) }; } },
+  { id: "lcm", g: 5, name: "최소공배수", ex: "6과 8", make() { const a = ri(3, 12), b = ri(3, 12); return { tokens: [N(a), TX("와"), N(b), TX("의 최소공배수")], kind: "int", ans: lcm(a, b) }; } },
+  { id: "fxn", g: 5, name: "분수 × 자연수", ex: "3/8 × 4", make() { const d = ri(3, 9), n = ri(1, d - 1), k = ri(2, 8); return { tokens: [FR(n, d), OP("×"), N(k)], kind: "frac", ans: reduce(n * k, d) }; } },
+  { id: "fxf", g: 5, name: "분수 × 분수", ex: "2/3 × 3/5", make() { const d1 = ri(2, 9), n1 = ri(1, d1 - 1), d2 = ri(2, 9), n2 = ri(1, d2 - 1); return { tokens: [FR(n1, d1), OP("×"), FR(n2, d2)], kind: "frac", ans: reduce(n1 * n2, d1 * d2) }; } },
+  { id: "dmul", g: 5, name: "소수 × 자연수", ex: "2.4 × 3", make() { const a = ri(11, 89) / 10, k = ri(2, 9); return { tokens: [N(a), OP("×"), N(k)], kind: "dec", ans: r1(a * k) }; } },
+  { id: "tri", g: 5, name: "삼각형의 넓이", ex: "밑×높÷2", make() { let b, h; do { b = ri(2, 20); h = ri(2, 20); } while ((b * h) % 2); return { tokens: [TX("밑변"), N(b), TX("높이"), N(h), TX("삼각형")], kind: "int", ans: (b * h) / 2 }; } },
+  { id: "trap", g: 5, name: "사다리꼴의 넓이", ex: "(윗+아래)×높÷2", make() { let a, b, h; do { a = ri(2, 14); b = ri(2, 14); h = ri(2, 12); } while (((a + b) * h) % 2); return { tokens: [TX("윗"), N(a), TX("아래"), N(b), TX("높"), N(h)], kind: "int", ans: ((a + b) * h) / 2 }; } },
+  { id: "pct", g: 5, name: "비와 비율(백분율)", ex: "60의 25%", make() { let w, p, v; do { w = pick([20, 40, 50, 60, 80, 100, 120, 200]); p = pick([5, 10, 20, 25, 50, 75]); v = w * p / 100; } while (!Number.isInteger(v)); return { tokens: [N(w), TX("의"), TX(p + "%")], kind: "int", ans: v }; } },
+  { id: "sdadd", g: 4, name: "같은분모 분수 덧셈", ex: "2/7 + 3/7", make() { const d = ri(3, 9), a = ri(1, d - 1), b = ri(1, d - 1); return { tokens: [FR(a, d), OP("+"), FR(b, d)], kind: "frac", ans: reduce(a + b, d) }; } },
+  { id: "sdsub", g: 4, name: "같은분모 분수 뺄셈", ex: "5/8 − 2/8", make() { const d = ri(4, 9), a = ri(2, d - 1), b = ri(1, a - 1); return { tokens: [FR(a, d), OP("−"), FR(b, d)], kind: "frac", ans: reduce(a - b, d) }; } },
+  { id: "dadd", g: 4, name: "소수의 덧셈·뺄셈", ex: "3.4 + 2.7", make() { const a = ri(11, 89) / 10, b = ri(11, 89) / 10; if (Math.random() < 0.5) return { tokens: [N(a), OP("+"), N(b)], kind: "dec", ans: r1(a + b) }; const x = Math.max(a, b), y = Math.min(a, b); return { tokens: [N(x), OP("−"), N(y)], kind: "dec", ans: r1(x - y) }; } },
+  { id: "m2x1", g: 3, name: "두 자릿수 × 한 자릿수", ex: "37 × 6", make() { const a = ri(12, 99), b = ri(2, 9); return { tokens: [N(a), OP("×"), N(b)], kind: "int", ans: a * b }; } },
+  { id: "divqr", g: 3, name: "나머지 있는 나눗셈", ex: "47 ÷ 6", make() { const dv = ri(3, 9), q = ri(3, 19), r = ri(1, dv - 1); return { tokens: [N(dv * q + r), OP("÷"), N(dv)], kind: "qr", ans: { q, r } }; } },
+  { id: "add", g: 2, name: "100칸 덧셈", ex: "7 + 8", make() { const a = ri(2, 9), b = ri(2, 9); return { tokens: [N(a), OP("+"), N(b)], kind: "int", ans: a + b }; } },
+  { id: "sub", g: 2, name: "100칸 뺄셈", ex: "16 − 9", make() { const a = ri(11, 18), b = ri(1, 9); return { tokens: [N(a), OP("−"), N(b)], kind: "int", ans: a - b }; } },
+  { id: "mul", g: 2, name: "구구단 곱셈", ex: "7 × 8", make() { const a = ri(2, 9), b = ri(2, 9); return { tokens: [N(a), OP("×"), N(b)], kind: "int", ans: a * b }; } },
+];
+const ROUND = 10;
+const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+/* ════════════════ 달무티 13계급 ════════════════ */
+const DAL = ["달무티", "대주교", "시종장", "남작 부인", "백작", "기사", "재봉사", "석공", "요리사", "양치기", "광부", "농노", "어릿광대"];
+function crest(title) {
+  const i = DAL.indexOf(title);
+  if (i === 0) return { bg: `linear-gradient(135deg,${C.gold},${C.goldDk})`, fg: "#fff", tier: "최고 귀족", crown: true };
+  if (i <= 4) return { bg: C.purple, fg: "#fff", tier: "귀족", crown: false };
+  if (i <= 6) return { bg: C.brand, fg: "#fff", tier: "기사·장인", crown: false };
+  if (i <= 10) return { bg: C.brown, fg: "#fff", tier: "장인·노동", crown: false };
+  if (i === 11) return { bg: C.stone, fg: "#fff", tier: "농노", crown: false };
+  return { bg: C.rose, fg: "#fff", tier: "어릿광대 · 반전의 카드", crown: false };
+}
+
+/* ════════════════ 듀오링고식 잠금 해제 + 왕관(메달) ════════════════ */
+const CLEAR_PCT = 80; // 정확도 80% 이상이면 단계 완료 → 다음 단계 잠금 해제
+const MEDALS = { gold: { name: "골드", c: "#E3B23C" }, silver: { name: "실버", c: "#A9B2BD" }, bronze: { name: "브론즈", c: "#C77B3B" }, none: { name: "", c: C.line } };
+function medalOf(acc) { if (acc >= 100) return "gold"; if (acc >= 85) return "silver"; if (acc >= 70) return "bronze"; return "none"; }
+// 낮은 단계 → 높은 단계 진행 순서 (학년 오름차순, 기존 STAGES 순서 유지)
+const ORDER = STAGES.map((s, i) => ({ s, i })).sort((a, b) => (a.s.g - b.s.g) || (a.i - b.i)).map((x) => x.s);
+
+// 로컬 진행상황: 최고기록(best)만 저장, 오프라인·즉시 반영 (저장 막힌 환경 대비 메모리 폴백)
+let memProgress = null;
+function loadProgress() { if (memProgress) return memProgress; try { const v = localStorage.getItem("progress"); memProgress = v ? JSON.parse(v) : {}; } catch (e) { memProgress = {}; } return memProgress; }
+function saveProgress(p) { memProgress = p; try { localStorage.setItem("progress", JSON.stringify(p)); } catch (e) {} }
+
+// 오늘의 미션(일일 세트) — 날짜 바뀌면 리셋, 저장 막힌 환경 대비 메모리 폴백
+function todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+let memDaily = null;
+function loadDaily() { if (memDaily) return memDaily; try { const v = JSON.parse(localStorage.getItem("daily") || "null"); memDaily = (v && v.date === todayStr()) ? v : { date: todayStr(), sets: 0 }; } catch (e) { memDaily = { date: todayStr(), sets: 0 }; } return memDaily; }
+function bumpDaily() { const d = loadDaily(); if (d.date !== todayStr()) { d.date = todayStr(); d.sets = 0; } d.sets += 1; memDaily = d; try { localStorage.setItem("daily", JSON.stringify(d)); } catch (e) {} return { ...d }; }
+function applyResult(stageId, acc) {
+  const p = loadProgress(), prev = p[stageId] || { best: 0 };
+  const best = Math.max(prev.best || 0, Math.round(acc)); // 최고 기록만 갱신
+  p[stageId] = { best, medal: medalOf(best), cleared: best >= CLEAR_PCT };
+  saveProgress(p); return p;
+}
+function mergeProgress(local, remote) { // 로컬·백엔드 중 best 큰 쪽 채택
+  const out = { ...local };
+  Object.keys(remote || {}).forEach((id) => {
+    const b = Math.max((out[id] && out[id].best) || 0, (remote[id] && remote[id].best) || 0);
+    out[id] = { best: b, medal: medalOf(b), cleared: b >= CLEAR_PCT };
+  });
+  return out;
+}
+// unlock 여부: 첫 단계는 항상 열림, 그 외엔 '직전 단계 완료(80%↑)' 시 열림
+function isUnlocked(stageId, progress) {
+  const idx = ORDER.findIndex((s) => s.id === stageId);
+  if (idx <= 0) return true;
+  const prev = ORDER[idx - 1];
+  return !!(progress[prev.id] && progress[prev.id].cleared);
+}
+function Lock({ s = 16, c = C.sub }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none"><rect x="5" y="10.5" width="14" height="9.5" rx="2" fill={c} /><path d="M8 10.5V7a4 4 0 018 0v3.5" stroke={c} strokeWidth="2" fill="none" /></svg>; }
+function Medal({ kind, s = 18 }) { if (!kind || kind === "none") return null; const c = MEDALS[kind].c; return <svg width={s} height={s} viewBox="0 0 24 24"><path d="M7 2l2 6 3-2 3 2 2-6" stroke={c} strokeWidth="2" fill="none" /><circle cx="12" cy="15" r="6" fill={c} /><circle cx="12" cy="15" r="2.6" fill="#fff" opacity=".5" /></svg>; }
+
+/* ════════════════ 백엔드 API + 오프라인 큐 ════════════════ */
+const api = {
+  on() { return !!CONFIG.API; },
+  q(p) { return CONFIG.API + "?" + new URLSearchParams({ ...p, token: CONFIG.TOKEN }); },
+  async getRoster() { const r = await fetch(this.q({ action: "roster" })); return (await r.json()).students; },
+  async getClass() { const r = await fetch(this.q({ action: "class" })); return (await r.json()).data; },
+  async getDashboard(no) { const r = await fetch(this.q({ action: "dashboard", no })); return (await r.json()).data; },
+  async getProgress(no) { const r = await fetch(this.q({ action: "progress", no })); return (await r.json()).data; },
+  async logSet(p) {
+    if (!this.on()) return null;
+    const body = JSON.stringify({ action: "log", token: CONFIG.TOKEN, ...p });
+    try {
+      const r = await fetch(CONFIG.API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body });
+      return (await r.json()).data;
+    } catch (e) { queueLog(p); return null; }
+  },
+};
+function queueLog(p) { try { const q = JSON.parse(localStorage.getItem("pendingLogs") || "[]"); q.push(p); localStorage.setItem("pendingLogs", JSON.stringify(q)); } catch (e) {} }
+async function flushQueue() {
+  if (!api.on()) return;
+  let q; try { q = JSON.parse(localStorage.getItem("pendingLogs") || "[]"); } catch (e) { return; }
+  if (!q.length) return;
+  const rest = [];
+  for (const p of q) { try { const r = await fetch(CONFIG.API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "log", token: CONFIG.TOKEN, ...p }) }); await r.json(); } catch (e) { rest.push(p); } }
+  localStorage.setItem("pendingLogs", JSON.stringify(rest));
+}
+
+/* ════════════════ 표시용 컴포넌트 ════════════════ */
+function Crown({ s = 14, c = "#fff" }) { return <svg width={s} height={s} viewBox="0 0 24 24" style={{ verticalAlign: "-2px" }}><path d="M3 8l4 4 5-7 5 7 4-4v10H3z" fill={c} /></svg>; }
+function Badge({ title, big }) {
+  if (!title) return null; const cr = crest(title);
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: cr.bg, color: cr.fg, padding: big ? "6px 14px" : "3px 10px", borderRadius: 20, fontWeight: 800, fontSize: big ? 16 : 12.5 }}>{cr.crown && <Crown s={big ? 17 : 13} />}{title}</span>;
+}
+function Frac({ n, d, size = 40 }) { return <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", verticalAlign: "middle", lineHeight: 1, margin: "0 4px" }}><span style={{ fontSize: size * 0.62, fontWeight: 700 }}>{n}</span><span style={{ height: 3, alignSelf: "stretch", background: "currentColor", borderRadius: 2, margin: "3px 6px" }} /><span style={{ fontSize: size * 0.62, fontWeight: 700 }}>{d}</span></span>; }
+function Question({ tokens, size = 44 }) { return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", color: C.ink, fontSize: size, fontWeight: 800, gap: 6, fontVariantNumeric: "tabular-nums" }}>{tokens.map((tk, i) => tk.t === "frac" ? <Frac key={i} n={tk.n} d={tk.d} size={size} /> : tk.t === "op" ? <span key={i} style={{ color: C.brand, margin: "0 4px" }}>{tk.v}</span> : tk.t === "txt" ? <span key={i} style={{ fontSize: size * 0.5, fontWeight: 700, color: C.sub, margin: "0 2px" }}>{tk.v}</span> : <span key={i}>{tk.v}</span>)}</div>; }
+function Donut({ pct, color, label, sub, size = 124 }) {
+  const sw = 15, r = (size - sw) / 2, cir = 2 * Math.PI * r, dash = Math.max(0, Math.min(100, pct || 0)) / 100 * cir;
+  return <div style={{ position: "relative", width: size, height: size }}><svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.track} strokeWidth={sw} /><circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={sw} strokeDasharray={`${dash} ${cir - dash}`} strokeLinecap="round" /></svg><div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", textAlign: "center" }}><div><div style={{ fontSize: size * 0.24, fontWeight: 900, color: C.ink, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{label}</div>{sub && <div style={{ fontSize: 11, color: C.sub, fontWeight: 700, marginTop: 3 }}>{sub}</div>}</div></div></div>;
+}
+const Card = ({ title, accent, children, span }) => (<section style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 18, padding: 16, boxShadow: "0 2px 10px rgba(0,0,0,.02)", gridColumn: span ? "1 / -1" : "auto" }}>{title && <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 13 }}><span style={{ width: 4, height: 15, borderRadius: 4, background: accent || C.brand }} /><h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: C.ink }}>{title}</h3></div>}{children}</section>);
+const Row = ({ cells, head, accent }) => (<div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", alignItems: "center", padding: "8px 6px", borderTop: head ? "none" : `1px solid ${C.line}`, background: head ? C.brandSoft : "transparent", borderRadius: head ? 8 : 0 }}>{cells.map((c, i) => <span key={i} style={{ fontSize: head ? 12 : 13.5, fontWeight: head ? 800 : (i === 0 ? 700 : 800), color: head ? C.brandDk : (i === 0 ? C.sub : (accent && i === 2 ? accent : C.ink)), textAlign: i === 0 ? "left" : "right", fontVariantNumeric: "tabular-nums" }}>{c}</span>)}</div>);
+const Shell = ({ children }) => <div style={{ background: C.paper, minHeight: "100%", fontFamily: FONT, padding: "20px 16px 28px" }}><div style={{ maxWidth: 1000, margin: "0 auto" }}>{children}</div></div>;
+const Note = ({ children, kind }) => <div style={{ padding: "12px 14px", background: kind === "warn" ? C.noSoft : C.goldSoft, color: kind === "warn" ? C.no : C.goldDk, borderRadius: 12, fontSize: 12.5, fontWeight: 700, lineHeight: 1.55 }}>{children}</div>;
+
+/* ════════════════ 앱 ════════════════ */
+function App() {
+  const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem("me") || "null"); } catch (e) { return null; } });
+  const [tab, setTab] = useState("learn");
+  const [playing, setPlaying] = useState(null);
+
+  const [progress, setProgress] = useState(() => loadProgress());
+  const [daily, setDaily] = useState(() => loadDaily());
+  const refreshProgress = useCallback(async (noArg) => {
+    const n = noArg != null ? noArg : (me && me.no);
+    if (!api.on() || n == null) return;
+    try { const remote = await api.getProgress(n); const merged = mergeProgress(loadProgress(), remote || {}); saveProgress(merged); setProgress(merged); } catch (e) {}
+  }, [me]);
+  useEffect(() => { flushQueue(); refreshProgress(); }, [refreshProgress]);
+  const choose = (s) => { try { localStorage.setItem("me", JSON.stringify(s)); } catch (e) {} setMe(s); setTab("learn"); refreshProgress(s.no); };
+  const clearMe = () => { try { localStorage.removeItem("me"); } catch (e) {} setMe(null); };
+
+  const onFinish = async (r) => {
+    const acc = Math.round(r.correct / r.total * 100);
+    setProgress(applyResult(playing.id, acc)); // 최고기록·메달·잠금해제 즉시 반영
+    setDaily(bumpDaily()); // 오늘의 미션(퀘스트) 진행
+    const payload = { no: me.no, name: me.name, stageId: playing.id, stageName: playing.name, correct: r.correct, total: r.total, seconds: r.seconds };
+    setPlaying(null); setTab("me");
+    await api.logSet(payload); // 오프라인이면 자동 큐
+    refreshProgress();
+  };
+
+  if (!me) return <Shell><SelectScreen onPick={choose} /></Shell>;
+  if (playing) return <Shell><Player stage={playing} onExit={() => setPlaying(null)} onDone={onFinish} /></Shell>;
+
+  return (
+    <Shell>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ width: 42, height: 42, borderRadius: 12, background: C.brand, display: "grid", placeItems: "center", color: "#fff", fontSize: 20, fontWeight: 900 }}>디</div>
+        <div style={{ flex: 1, minWidth: 120 }}>
+          <div style={{ fontSize: 18, fontWeight: 900, color: C.ink }}>디딤돌 연산</div>
+          <div style={{ fontSize: 12, color: C.sub, fontWeight: 600 }}>{me.no}번 {me.name}</div>
+        </div>
+        <button onClick={clearMe} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 9, padding: "6px 10px", fontSize: 12.5, fontWeight: 700, color: C.sub, cursor: "pointer" }}>← 바꾸기</button>
+      </div>
+      <div style={{ display: "flex", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 4, gap: 4, marginBottom: 14 }}>
+        {[["learn", "학습"], ["me", "내 학습판"], ["class", "우리 반"]].map(([k, t]) => (
+          <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: "9px 0", fontSize: 14, fontWeight: 800, borderRadius: 9, cursor: "pointer", border: "none", color: tab === k ? "#fff" : C.sub, background: tab === k ? C.brand : "transparent" }}>{t}</button>))}
+      </div>
+
+      {tab === "learn" && <LearnScreen onStart={setPlaying} progress={progress} daily={daily} />}
+      {tab === "me" && <MeScreen no={me.no} />}
+      {tab === "class" && <ClassScreen meNo={me.no} />}
+
+      <div style={{ textAlign: "center", marginTop: 18, fontSize: 11, color: C.line, fontWeight: 600 }}>디딤돌 연산 · 갈담초 5학년{api.on() ? "" : " · (백엔드 미연결 — 학습 기록은 저장만 됩니다)"}</div>
+    </Shell>
+  );
+}
+
+/* ─────────── 첫 화면: 학생 선택 ─────────── */
+function SelectScreen({ onPick }) {
+  const [list, setList] = useState(null);
+  useEffect(() => { (async () => {
+    if (api.on()) { try { const r = await api.getRoster(); if (r && r.length) { setList(r); return; } } catch (e) {} }
+    setList(Array.from({ length: 18 }, (_, i) => ({ no: i + 1, name: `${i + 1}번` })));
+  })(); }, []);
+  return (
+    <>
+      <div style={{ textAlign: "center", margin: "10px 0 22px" }}>
+        <div style={{ width: 56, height: 56, borderRadius: 16, background: C.brand, display: "inline-grid", placeItems: "center", color: "#fff", fontSize: 27, fontWeight: 900, marginBottom: 10 }}>디</div>
+        <div style={{ fontSize: 23, fontWeight: 900, color: C.ink }}>디딤돌 연산</div>
+        <div style={{ fontSize: 14, color: C.sub, fontWeight: 600, marginTop: 4 }}>갈담초 5학년 · 나를 선택하세요</div>
+      </div>
+      {!list ? <Loading /> :
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10 }}>
+          {list.map((s) => (
+            <button key={s.no} onClick={() => onPick(s)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 12px", cursor: "pointer", textAlign: "center", fontSize: 16, fontWeight: 800, color: C.ink }}>{s.no}번 {s.name}</button>))}
+        </div>}
+    </>
+  );
+}
+
+/* ─────────── 학습: 단계 선택 ─────────── */
+/* ════════════════ 학년별 월드맵 (듀오링고식 세로 path) ════════════════ */
+const WORLD_THEME = {
+  2: { name: "숫자 마을", emoji: "🌱", c: "#3FA66A", soft: "#E4F3EA" },
+  3: { name: "곱셈 숲", emoji: "🌳", c: "#2E8B8B", soft: "#E0F0F0" },
+  4: { name: "분수 강", emoji: "🌊", c: "#3F6BD6", soft: "#E5ECFB" },
+  5: { name: "연산 성", emoji: "🏰", c: C.brand, soft: C.brandSoft },
+};
+const WORLDS = [2, 3, 4, 5].map((g) => ({ g, stages: STAGES.filter((s) => s.g === g), ...WORLD_THEME[g] }));
+const QUESTS = [{ icon: "⚔️", name: "아침 훈련" }, { icon: "🏰", name: "기사 시험" }, { icon: "🔥", name: "자동화 훈련" }, { icon: "👑", name: "승급 도전" }];
+const QUEST_SETS = 5; // 퀘스트당 세트 (4퀘스트 = 하루 20세트, 단 학생에겐 '세트 수'를 숨김)
+
+function DailyMission({ daily }) {
+  const done = (daily && daily.sets) || 0, total = QUESTS.length * QUEST_SETS;
+  const doneQuests = Math.floor(done / QUEST_SETS), allDone = done >= total;
+  const nextNeed = allDone ? 0 : QUEST_SETS - (done % QUEST_SETS);
+  return (
+    <div style={{ background: `linear-gradient(135deg,${C.brand},${C.brandDk})`, borderRadius: 18, padding: 16, color: "#fff", marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 15, fontWeight: 900 }}>오늘의 기사 훈련</div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.goldSoft }}>{allDone ? "오늘 훈련 완료! 👑" : `다음 미션까지 ${nextNeed}세트`}</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        {QUESTS.map((q, i) => {
+          const complete = doneQuests > i || allDone, active = doneQuests === i && !allDone;
+          const cnt = Math.min(QUEST_SETS, Math.max(0, done - i * QUEST_SETS));
+          return (
+            <div key={i} style={{ background: complete ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.10)", border: active ? "2px solid #fff" : "2px solid transparent", borderRadius: 12, padding: "9px 11px", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 18 }}>{q.icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 800 }}>{q.name}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: .85 }}>{complete ? "완료 ✓" : `${cnt}/${QUEST_SETS}세트`}</div>
+              </div>
+            </div>);
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Node({ stage, pr, unlocked, cleared, current, color, dx, onStart }) {
+  const size = current ? 76 : 64;
+  return (
+    <div style={{ transform: `translateX(${dx}px)`, display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+      <button disabled={!unlocked} onClick={() => unlocked && onStart(stage)} style={{ width: size, height: size, borderRadius: "50%", border: `3px solid ${unlocked ? color : C.line}`, background: !unlocked ? C.track : cleared ? color : "#fff", cursor: unlocked ? "pointer" : "default", position: "relative", display: "grid", placeItems: "center", boxShadow: current ? `0 0 0 6px ${color}22` : "0 2px 6px rgba(0,0,0,.08)", padding: 0 }}>
+        {!unlocked ? <Lock s={22} /> : cleared ? <span style={{ color: "#fff", fontSize: 26, fontWeight: 900, lineHeight: 1 }}>★</span> : <span style={{ fontSize: 13, fontWeight: 800, color: color }}>{current ? "▶" : ""}</span>}
+        {pr && pr.medal && pr.medal !== "none" && <span style={{ position: "absolute", right: -7, bottom: -7 }}><Medal kind={pr.medal} s={26} /></span>}
+      </button>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: unlocked ? C.ink : C.sub, textAlign: "center", maxWidth: 130, lineHeight: 1.25 }}>{stage.name}</div>
+      {current && <span style={{ fontSize: 11, fontWeight: 800, color: color }}>여기서 시작!</span>}
+    </div>
+  );
+}
+
+function World({ world: w, progress, currentId, onStart }) {
+  const open = isUnlocked(w.stages[0].id, progress);
+  const pattern = [0, 52, 74, 52, 0, -52, -74, -52];
+  return (
+    <section style={{ marginBottom: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, background: open ? w.soft : C.track, border: `1px solid ${C.line}`, borderRadius: 16, padding: "12px 16px", marginBottom: 14, opacity: open ? 1 : .7 }}>
+        <span style={{ fontSize: 26 }}>{w.emoji}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: open ? w.c : C.sub }}>{w.g}학년{w.g === 5 ? " · 목표" : ""}</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: C.ink }}>{w.name}</div>
+        </div>
+        {!open && <Lock s={18} />}
+      </div>
+      <div style={{ position: "relative", padding: "6px 0" }}>
+        <div style={{ position: "absolute", left: "50%", top: 10, bottom: 10, borderLeft: `3px dashed ${C.line}`, transform: "translateX(-50%)" }} />
+        <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 20 }}>
+          {w.stages.map((s, j) => {
+            const pr = progress[s.id];
+            return <Node key={s.id} stage={s} pr={pr} unlocked={isUnlocked(s.id, progress)} cleared={!!(pr && pr.cleared)} current={s.id === currentId} color={w.c} dx={pattern[j % pattern.length]} onStart={onStart} />;
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LearnScreen({ onStart, progress, daily }) {
+  const cur = ORDER.find((s) => isUnlocked(s.id, progress) && !(progress[s.id] && progress[s.id].cleared));
+  const currentId = cur ? cur.id : null;
+  return (
+    <div style={{ maxWidth: 460, margin: "0 auto" }}>
+      <DailyMission daily={daily} />
+      <div style={{ display: "flex", gap: 12, justifyContent: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        {[["bronze", "70%"], ["silver", "85%"], ["gold", "100%"]].map(([k, v]) => (
+          <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: C.sub }}><Medal kind={k} s={16} />{MEDALS[k].name} {v}</span>))}
+      </div>
+      {WORLDS.map((w) => <World key={w.g} world={w} progress={progress} currentId={currentId} onStart={onStart} />)}
+      <div style={{ textAlign: "center", fontSize: 12, color: C.sub, fontWeight: 700 }}>정확도 80% 이상이면 다음 단계가 열려요</div>
+    </div>
+  );
+}
+
+/* ─────────── 학습: 풀이 ─────────── */
+function Player({ stage, onExit, onDone }) {
+  const [probs] = useState(() => Array.from({ length: ROUND }, () => stage.make()));
+  const [idx, setIdx] = useState(0); const [marks, setMarks] = useState([]);
+  const [vals, setVals] = useState({ a: "" }); const [active, setActive] = useState("a");
+  const [feedback, setFeedback] = useState(null); const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef(Date.now()); const lockRef = useRef(false); const tRef = useRef(null);
+  const p = probs[idx];
+  useEffect(() => { tRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 100); return () => clearInterval(tRef.current); }, []);
+  useEffect(() => { if (p.kind === "frac") { setVals({ n: "", d: "" }); setActive("n"); } else if (p.kind === "qr") { setVals({ q: "", r: "" }); setActive("q"); } else { setVals({ a: "" }); setActive("a"); } }, [idx]);
+  const press = (k) => { if (lockRef.current) return; setVals((v) => { const cur = v[active] ?? ""; if (k === "del") return { ...v, [active]: cur.slice(0, -1) }; if (k === ".") { if (p.kind !== "dec" || cur.includes(".") || cur === "") return v; return { ...v, [active]: cur + "." }; } if (cur.replace(".", "").length >= 4) return v; return { ...v, [active]: cur + k }; }); };
+  const judge = () => {
+    if (lockRef.current) return; let ok = false;
+    if (p.kind === "frac") { const n = parseInt(vals.n, 10), d = parseInt(vals.d, 10); if (Number.isFinite(n) && Number.isFinite(d) && d !== 0) { const r = reduce(n, d); ok = r.n === p.ans.n && r.d === p.ans.d; } }
+    else if (p.kind === "qr") ok = parseInt(vals.q, 10) === p.ans.q && parseInt(vals.r, 10) === p.ans.r;
+    else if (p.kind === "dec") ok = Math.abs(parseFloat(vals.a) - p.ans) < 1e-9;
+    else ok = parseInt(vals.a, 10) === p.ans;
+    const nm = [...marks, ok]; setMarks(nm); setFeedback(ok ? "ok" : "no"); lockRef.current = true;
+    setTimeout(() => { lockRef.current = false; setFeedback(null);
+      if (idx + 1 >= ROUND) { clearInterval(tRef.current); const correct = nm.filter(Boolean).length; onDone({ correct, total: ROUND, perfect: correct === ROUND, seconds: Math.round((Date.now() - startRef.current) / 1000), marks: nm }); }
+      else setIdx(idx + 1);
+    }, ok ? 460 : 1100);
+  };
+  const ansText = () => p.kind === "frac" ? `${p.ans.n}/${p.ans.d}` : p.kind === "qr" ? `몫 ${p.ans.q}·나머지 ${p.ans.r}` : String(p.ans);
+  const keypad = ["1", "2", "3", "4", "5", "6", "7", "8", "9", p.kind === "dec" ? "." : "", "0", "del"];
+  return (
+    <>
+      <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}`}</style>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <button onClick={onExit} style={{ background: "none", border: "none", color: C.sub, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>‹ 그만</button>
+        <div style={{ fontSize: 13.5, fontWeight: 800 }}>{stage.name}</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.gold, minWidth: 46, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtTime(elapsed)}</div>
+      </div>
+      <div style={{ display: "flex", gap: 5, marginBottom: 18 }}>{Array.from({ length: ROUND }).map((_, i) => <span key={i} style={{ flex: 1, height: 6, borderRadius: 4, background: i < idx ? (marks[i] ? C.ok : C.no) : i === idx ? C.brand : C.line }} />)}</div>
+      <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 22, padding: "30px 16px 26px", textAlign: "center", marginBottom: 14, animation: feedback === "no" ? "shake .4s" : "none", boxShadow: feedback === "ok" ? `0 0 0 3px ${C.ok}` : feedback === "no" ? `0 0 0 3px ${C.no}` : "0 2px 14px rgba(0,0,0,.03)" }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.sub, marginBottom: 14 }}>{idx + 1} / {ROUND}</div>
+        <Question tokens={p.tokens} />
+        <div style={{ marginTop: 20 }}><AnswerInput p={p} vals={vals} active={active} setActive={setActive} feedback={feedback} /></div>
+        {feedback === "no" && <div style={{ marginTop: 12, fontSize: 14, fontWeight: 800, color: C.no }}>정답 {ansText()}</div>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 }}>
+        {keypad.map((k, i) => k === "" ? <span key={i} /> : <button key={i} onClick={() => press(k)} style={{ padding: "15px 0", fontSize: 21, fontWeight: 800, borderRadius: 14, cursor: "pointer", color: k === "del" ? C.no : C.ink, background: C.key, border: `1px solid ${C.keyLine}`, fontVariantNumeric: "tabular-nums" }}>{k === "del" ? "⌫" : k}</button>)}
+      </div>
+      <button onClick={judge} style={{ width: "100%", padding: "15px 0", fontSize: 17, fontWeight: 800, borderRadius: 15, cursor: "pointer", color: "#fff", background: C.brand, border: "none" }}>확인</button>
+    </>
+  );
+}
+function AnswerInput({ p, vals, active, setActive, feedback }) {
+  const box = (key, ph) => { const on = active === key; return (<button onClick={() => setActive(key)} style={{ minWidth: 68, padding: "9px 14px", fontSize: 25, fontWeight: 800, borderRadius: 12, background: feedback === "ok" ? C.okSoft : feedback === "no" ? C.noSoft : "#fff", border: `2px solid ${on ? C.brand : C.line}`, color: C.ink, cursor: "pointer", fontVariantNumeric: "tabular-nums" }}>{vals[key] !== "" && vals[key] != null ? vals[key] : <span style={{ color: C.line }}>{ph}</span>}{on && <span style={{ color: C.brand }}>|</span>}</button>); };
+  if (p.kind === "frac") return <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 6 }}>{box("n", "분자")}<span style={{ width: 84, height: 3, background: C.ink, borderRadius: 2 }} />{box("d", "분모")}</div>;
+  if (p.kind === "qr") return <div style={{ display: "inline-flex", alignItems: "center", gap: 12 }}><span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 4 }}><span style={{ fontSize: 12, fontWeight: 800, color: C.sub }}>몫</span>{box("q", "?")}</span><span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 4 }}><span style={{ fontSize: 12, fontWeight: 800, color: C.sub }}>나머지</span>{box("r", "?")}</span></div>;
+  return box("a", "답");
+}
+
+/* ─────────── 내 학습판 (백엔드) ─────────── */
+function MeScreen({ no }) {
+  const [d, setD] = useState(undefined); // undefined=로딩, null=실패
+  useEffect(() => { (async () => { if (!api.on()) { setD(null); return; } try { setD(await api.getDashboard(no)); } catch (e) { setD(null); } })(); }, [no]);
+  if (d === undefined) return <Loading />;
+  if (!d) return <Note kind="warn">대시보드를 보려면 백엔드 연결이 필요합니다. 학습은 정상 동작하며 기록은 저장돼 있다가 연결되면 반영됩니다.</Note>;
+  const lv = d.level || { idx: 0, name: "첫걸음", cur: 0, next: 300, isMax: false };
+  const toNext = lv.isMax ? 0 : lv.next - d.points, lvPct = lv.isMax ? 100 : Math.round((d.points - lv.cur) / (lv.next - lv.cur) * 100);
+  const cr = crest(d.title);
+  return (
+    <>
+      <div style={{ background: cr.bg, borderRadius: 20, padding: 20, color: "#fff", marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, opacity: .9 }}>이번 주 계급</div>
+            <div style={{ fontSize: 34, fontWeight: 900, display: "flex", alignItems: "center", gap: 8 }}>{cr.crown && <Crown s={28} />}{d.title}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, opacity: .92, marginTop: 2 }}>{d.tier} · 반 {d.pos + 1}위 / {d.classSize}명</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, opacity: .9 }}>이번 주 성장</div>
+            <div style={{ fontSize: 30, fontWeight: 900, fontVariantNumeric: "tabular-nums" }}>{km(d.weekly)}P</div>
+            <div style={{ fontSize: 12, fontWeight: 700, opacity: .9 }}>연속 {d.streak}일</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 14, padding: "9px 12px", background: "rgba(255,255,255,.16)", borderRadius: 11, fontSize: 12, fontWeight: 700, lineHeight: 1.5 }}>
+          계급은 <b>매주 월요일</b> 이번 주 성장 포인트로 새로 정해져요. 다음 주엔 누구나 다시 도전!
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 14 }}>
+        <Card title="나의 디딤돌 (누적)" accent={C.gold}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <span style={{ fontSize: 18, fontWeight: 900, color: C.brandDk }}>Lv.{lv.idx + 1} {lv.name}</span>
+            <span style={{ fontSize: 14, fontWeight: 800, color: C.goldDk }}>{km(d.points)}P</span></div>
+          <div style={{ height: 9, background: C.track, borderRadius: 6 }}><div style={{ width: `${lvPct}%`, height: "100%", background: C.gold, borderRadius: 6 }} /></div>
+          <div style={{ marginTop: 6, fontSize: 12, color: C.sub, fontWeight: 700 }}>{lv.isMax ? "최고 레벨!" : `다음 레벨까지 ${km(toNext)}P`}</div>
+        </Card>
+        <Card title="최근 학습" accent={C.blue}>
+          {(!d.recent || !d.recent.length) ? <div style={{ fontSize: 13, color: C.sub, fontWeight: 600, padding: "8px 2px" }}>아직 기록이 없어요. [학습] 탭에서 한 세트 풀어보세요!</div>
+            : d.recent.slice(0, 4).map((l, i) => (<div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 2px", borderTop: i ? `1px solid ${C.line}` : "none" }}><span style={{ fontSize: 13.5, fontWeight: 600 }}>{l.stageName} · {l.correct}/{l.total}{l.perfect ? " 완전통과!" : ""}</span><span style={{ fontSize: 14, fontWeight: 900, color: C.goldDk }}>+{l.points}P</span></div>))}
+        </Card>
+        <Card title="성실도 · 최근 30일" accent={C.brand}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <Donut pct={d.dilig} color={C.brand} label={`${d.dilig}%`} sub="성실도" />
+            <div style={{ flex: 1, minWidth: 130 }}><Row head cells={["기준", "일수", ""]} /><Row cells={["학습 완료", `${d.c30}일`, ""]} /><Row cells={["미학습", `${30 - d.c30}일`, ""]} /></div></div>
+        </Card>
+        <Card title="학습 진행률" accent={C.no}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <Donut pct={d.perfectRate} color={C.ok} label={`${d.perfectRate}%`} sub="완전통과율" />
+            <div style={{ flex: 1, minWidth: 130 }}><Row head cells={["", "누적", ""]} /><Row cells={["완전통과", `${d.perfectSets}세트`, ""]} /><Row cells={["총 세트", `${d.sets}세트`, ""]} /><Row cells={["정확도", `${d.accuracy}%`, ""]} accent={C.ok} /></div></div>
+        </Card>
+      </div>
+    </>
+  );
+}
+
+/* ─────────── 우리 반 (백엔드) ─────────── */
+function ClassScreen({ meNo }) {
+  const [d, setD] = useState(undefined);
+  useEffect(() => { (async () => { if (!api.on()) { setD(null); return; } try { setD(await api.getClass()); } catch (e) { setD(null); } })(); }, []);
+  if (d === undefined) return <Loading />;
+  if (!d) return <Note kind="warn">반 순위를 보려면 백엔드 연결이 필요합니다. (배포 가이드 4단계 참고)</Note>;
+  const s = d.summary, list = d.students || [];
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 14 }}>
+        <Summary v={s.dalmuti} l="이번 주 달무티" c={C.goldDk} />
+        <Summary v={`${km(s.weeklyTotal)}P`} l="반 이번 주 성장 합계" c={C.brand} />
+        <Summary v={`${s.studiedToday}/${s.count}`} l="오늘 학습한 학생" c={C.blue} />
+      </div>
+      <Card title="이번 주 성장 랭킹 · 달무티 계급" accent={C.gold}>
+        <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginBottom: 10, lineHeight: 1.5 }}>누적이 아니라 <b style={{ color: C.brandDk }}>이번 주에 얼마나 성장했는가</b>로 줄을 세웁니다. 매주 월요일 계급이 새로 정해져요.</div>
+        <div style={{ overflowX: "auto" }}><div style={{ minWidth: 480 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "40px 1.3fr 1fr 1.1fr 0.8fr", padding: "8px 8px", background: C.brandSoft, borderRadius: 9, fontSize: 12, fontWeight: 800, color: C.brandDk }}>
+            <span>순위</span><span>학생</span><span style={{ textAlign: "right" }}>이번 주 성장</span><span style={{ textAlign: "center" }}>계급</span><span style={{ textAlign: "right" }}>정확도</span></div>
+          {list.map((b) => { const mine = b.no === meNo; return (
+            <div key={b.no} style={{ display: "grid", gridTemplateColumns: "40px 1.3fr 1fr 1.1fr 0.8fr", alignItems: "center", padding: "10px 8px", borderTop: `1px solid ${C.line}`, background: mine ? C.goldSoft : "transparent", borderRadius: mine ? 9 : 0, fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ fontWeight: 900, color: b.pos < 3 ? C.goldDk : C.sub, fontSize: 14 }}>{b.pos + 1}</span>
+              <span style={{ fontWeight: mine ? 900 : 700, color: C.ink, fontSize: 13.5 }}>{b.no}번 {b.name}{mine ? " (나)" : ""}</span>
+              <span style={{ textAlign: "right", fontWeight: 900, color: C.goldDk, fontSize: 14 }}>{km(b.weekly)}P</span>
+              <span style={{ textAlign: "center" }}><Badge title={b.title} /></span>
+              <span style={{ textAlign: "right", fontWeight: 800, color: C.ok, fontSize: 13.5 }}>{b.accuracy}%</span>
+            </div>); })}
+        </div></div>
+      </Card>
+    </>
+  );
+}
+
+function Summary({ v, l, c }) { return <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "15px 12px", textAlign: "center" }}><div style={{ fontSize: 22, fontWeight: 900, color: c, fontVariantNumeric: "tabular-nums" }}>{v}</div><div style={{ fontSize: 12, color: C.sub, fontWeight: 700, marginTop: 3 }}>{l}</div></div>; }
+function Loading() { return <div style={{ padding: "40px 0", textAlign: "center", color: C.sub, fontWeight: 700, fontSize: 14 }}>불러오는 중…</div>; }
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
