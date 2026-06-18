@@ -34,6 +34,10 @@ const CONFIG = {
   API: "https://script.google.com/macros/s/AKfycbwAs6_nHkqs9aRLG4C63sr3-J_WeMGmUFv11K84tooThHbfob_8SCxaxNVTohBIjRE/exec",      // 예: "https://script.google.com/macros/s/AKfy.../exec"
   TOKEN: "",    // 예: "galdam2026"  (Code.gs 와 동일하게)
 };
+// ▼ 버전 — 깃허브에 새로 올릴 때마다 여기 숫자/날짜만 바꾸세요. 로그인 화면과 하단에 표시됩니다.
+const APP_VERSION = "v1.0";
+const APP_DATE = "2026-06-18";
+const APP_NOTE = "협동 모드 · 단계별 반복 횟수 표시"; // 이번 버전 한 줄 요약(원하면 비워도 됨)
 
 /* ════════════════ 디자인 토큰 ════════════════ */
 const C = {
@@ -154,33 +158,43 @@ const CLEAR_PCT = 80; // 정확도 80% 이상이면 단계 완료 → 다음 단
 const MEDALS = { gold: { name: "골드", c: "#E3B23C" }, silver: { name: "실버", c: "#A9B2BD" }, bronze: { name: "브론즈", c: "#C77B3B" }, none: { name: "", c: C.line } };
 // 속도 단계: 빠를수록 자동화 — 👑반사(≤1초) ⚡자동화(≤2초) 🌱생각(그 외)
 const SPEED = { reflex: { name: "반사", emoji: "👑", xp: 3, c: C.gold }, auto: { name: "자동화", emoji: "⚡", xp: 2, c: C.ok }, think: { name: "생각", emoji: "🌱", xp: 1, c: C.blue } };
-const speedTier = (sec) => sec <= 1 ? "reflex" : sec <= 2 ? "auto" : "think";
+const speedTier = (sec, stage, p) => { const t = stageBudget(stage, p); return sec <= t ? "reflex" : sec <= t * 1.9 ? "auto" : "think"; };
+// 학년(월드)·문항 형태별 '빠름' 기준 시간(초) — 패드 입력 시간 고려해 넉넉히, 뒤 월드일수록 여유
+const WORLD_T = { 1: 2.5, 2: 3, 3: 4, 4: 5.5, 5: 6 };
+function stageBudget(stage, p) { let t = WORLD_T[stage ? stage.g : 3] || 4; if (p && (p.kind === "frac" || p.kind === "mixed" || p.kind === "qr")) t += 1.5; return t; }
 function isBlank(p, vals) { if (p.kind === "frac") return vals.n === "" && vals.d === ""; if (p.kind === "qr") return vals.q === "" && vals.r === ""; if (p.kind === "mixed") return vals.n === "" && vals.d === "" && (vals.w === "" || vals.w == null); return vals.a === ""; }
 function medalOf(acc) { if (acc >= 100) return "gold"; if (acc >= 85) return "silver"; if (acc >= 70) return "bronze"; return "none"; }
 // 낮은 단계 → 높은 단계 진행 순서 (학년 오름차순, 기존 STAGES 순서 유지)
 const ORDER = STAGES.map((s, i) => ({ s, i })).sort((a, b) => (a.s.g - b.s.g) || (a.i - b.i)).map((x) => x.s);
 
 // 로컬 진행상황: 최고기록(best)만 저장, 오프라인·즉시 반영 (저장 막힌 환경 대비 메모리 폴백)
-let memProgress = null;
-function loadProgress() { if (memProgress) return memProgress; try { const v = localStorage.getItem("progress"); memProgress = v ? JSON.parse(v) : {}; } catch (e) { memProgress = {}; } return memProgress; }
-function saveProgress(p) { memProgress = p; try { localStorage.setItem("progress", JSON.stringify(p)); } catch (e) {} }
-
-// 오늘의 미션(일일 세트) — 날짜 바뀌면 리셋, 저장 막힌 환경 대비 메모리 폴백
+// 로컬 저장: 계정(학생 번호)별로 분리 — 같은 패드에서 다른 학생끼리 진행상황이 섞이지 않게 (저장 막힌 환경 대비 메모리 폴백)
+const memStore = {};
+function lsGet(k) { try { const v = localStorage.getItem(k); return v != null ? v : (k in memStore ? memStore[k] : null); } catch (e) { return k in memStore ? memStore[k] : null; } }
+function lsSet(k, v) { memStore[k] = v; try { localStorage.setItem(k, v); } catch (e) {} }
+function lsDel(k) { delete memStore[k]; try { localStorage.removeItem(k); } catch (e) {} }
+function loadProgress(no) { try { const v = lsGet(`progress:${no}`); return v ? JSON.parse(v) : {}; } catch (e) { return {}; } }
+function saveProgress(no, p) { lsSet(`progress:${no}`, JSON.stringify(p)); }
+// 오늘의 추천(일일) — 날짜 바뀌면 리셋
 function todayStr() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
-let memDaily = null;
-function loadDaily() { if (memDaily) return memDaily; try { const v = JSON.parse(localStorage.getItem("daily") || "null"); memDaily = (v && v.date === todayStr()) ? v : { date: todayStr(), sets: 0, recent: [] }; } catch (e) { memDaily = { date: todayStr(), sets: 0, recent: [] }; } return memDaily; }
-function bumpDaily(acc) { const d = loadDaily(); if (d.date !== todayStr()) { d.date = todayStr(); d.sets = 0; d.recent = []; } d.sets += 1; d.recent = [...(d.recent || []), Math.round(acc || 0)].slice(-6); memDaily = d; try { localStorage.setItem("daily", JSON.stringify(d)); } catch (e) {} return { ...d }; }
-function applyResult(stageId, acc) {
-  const p = loadProgress(), prev = p[stageId] || { best: 0 };
-  const best = Math.max(prev.best || 0, Math.round(acc)); // 최고 기록만 갱신
-  p[stageId] = { best, medal: medalOf(best), cleared: best >= CLEAR_PCT };
-  saveProgress(p); return p;
+function emptyDaily() { return { date: todayStr(), sets: 0, recent: [] }; }
+function loadDaily(no) { try { const v = JSON.parse(lsGet(`daily:${no}`) || "null"); return (v && v.date === todayStr()) ? v : emptyDaily(); } catch (e) { return emptyDaily(); } }
+function bumpDaily(no, acc) { const d = loadDaily(no); d.sets += 1; d.recent = [...(d.recent || []), Math.round(acc || 0)].slice(-6); lsSet(`daily:${no}`, JSON.stringify(d)); return { ...d }; }
+function applyResult(no, stageId, acc) {
+  const p = loadProgress(no), prev = p[stageId] || { best: 0 };
+  const best = Math.max(prev.best || 0, Math.round(acc));
+  p[stageId] = { best, medal: medalOf(best), cleared: best >= CLEAR_PCT, plays: (prev.plays || 0) + 1 };
+  saveProgress(no, p); return p;
 }
+// 로그인 PIN (계정 분리용) — 같은 패드에서 다른 학생이 함부로 못 들어가게
+function getPin(no) { return lsGet(`pin:${no}`); }
+function savePin(no, pin) { lsSet(`pin:${no}`, pin); }
+function resetAccount(no) { lsDel(`progress:${no}`); lsDel(`daily:${no}`); lsDel(`pin:${no}`); }
 function mergeProgress(local, remote) { // 로컬·백엔드 중 best 큰 쪽 채택
   const out = { ...local };
   Object.keys(remote || {}).forEach((id) => {
     const b = Math.max((out[id] && out[id].best) || 0, (remote[id] && remote[id].best) || 0);
-    out[id] = { best: b, medal: medalOf(b), cleared: b >= CLEAR_PCT };
+    out[id] = { best: b, medal: medalOf(b), cleared: b >= CLEAR_PCT, plays: (out[id] && out[id].plays) || (remote[id] && remote[id].plays) || 0 };
   });
   return out;
 }
@@ -230,7 +244,7 @@ function Badge({ title, big }) {
   if (!title) return null; const cr = crest(title);
   return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, background: cr.bg, color: cr.fg, padding: big ? "6px 14px" : "3px 10px", borderRadius: 20, fontWeight: 800, fontSize: big ? 16 : 12.5 }}>{cr.crown && <Crown s={big ? 17 : 13} />}{title}</span>;
 }
-function Frac({ n, d, size = 40 }) { return <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", verticalAlign: "middle", lineHeight: 1, margin: "0 4px" }}><span style={{ fontSize: size * 0.62, fontWeight: 700 }}>{n}</span><span style={{ height: 3, alignSelf: "stretch", background: "currentColor", borderRadius: 2, margin: "3px 6px" }} /><span style={{ fontSize: size * 0.62, fontWeight: 700 }}>{d}</span></span>; }
+function Frac({ n, d, size = 40 }) { return <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", verticalAlign: "middle", lineHeight: 1, margin: "0 5px" }}><span style={{ fontSize: size * 0.6, fontWeight: 700, padding: "0 7px" }}>{n}</span><span style={{ height: 3, alignSelf: "stretch", minWidth: size * 0.85, background: "currentColor", borderRadius: 2, margin: "4px 0" }} /><span style={{ fontSize: size * 0.6, fontWeight: 700, padding: "0 7px" }}>{d}</span></span>; }
 function Question({ tokens, size = 44 }) { return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap", color: C.ink, fontSize: size, fontWeight: 800, gap: 6, fontVariantNumeric: "tabular-nums" }}>{tokens.map((tk, i) => tk.t === "frac" ? <Frac key={i} n={tk.n} d={tk.d} size={size} /> : tk.t === "op" ? <span key={i} style={{ color: C.brand, margin: "0 4px" }}>{tk.v}</span> : tk.t === "txt" ? <span key={i} style={{ fontSize: size * 0.5, fontWeight: 700, color: C.sub, margin: "0 2px" }}>{tk.v}</span> : <span key={i}>{tk.v}</span>)}</div>; }
 function Donut({ pct, color, label, sub, size = 124 }) {
   const sw = 15, r = (size - sw) / 2, cir = 2 * Math.PI * r, dash = Math.max(0, Math.min(100, pct || 0)) / 100 * cir;
@@ -246,29 +260,27 @@ function App() {
   const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem("me") || "null"); } catch (e) { return null; } });
   const [tab, setTab] = useState("learn");
   const [playing, setPlaying] = useState(null);
-
-  const [progress, setProgress] = useState(() => loadProgress());
-  const [daily, setDaily] = useState(() => loadDaily());
-  const refreshProgress = useCallback(async (noArg) => {
-    const n = noArg != null ? noArg : (me && me.no);
-    if (!api.on() || n == null) return;
-    try { const remote = await api.getProgress(n); const merged = mergeProgress(loadProgress(), remote || {}); saveProgress(merged); setProgress(merged); } catch (e) {}
-  }, [me]);
-  useEffect(() => { flushQueue(); refreshProgress(); }, [refreshProgress]);
-  const choose = (s) => { try { localStorage.setItem("me", JSON.stringify(s)); } catch (e) {} setMe(s); setTab("learn"); refreshProgress(s.no); };
-  const clearMe = () => { try { localStorage.removeItem("me"); } catch (e) {} setMe(null); };
+  const [progress, setProgress] = useState(() => me ? loadProgress(me.no) : {});
+  const [daily, setDaily] = useState(() => me ? loadDaily(me.no) : emptyDaily());
+  const refreshProgress = useCallback(async (no) => {
+    if (!api.on() || no == null) return;
+    try { const remote = await api.getProgress(no); const merged = mergeProgress(loadProgress(no), remote || {}); saveProgress(no, merged); setProgress(merged); } catch (e) {}
+  }, []);
+  useEffect(() => { flushQueue(); if (me) refreshProgress(me.no); }, []);
+  const login = (s) => { try { localStorage.setItem("me", JSON.stringify(s)); } catch (e) {} setMe(s); setProgress(loadProgress(s.no)); setDaily(loadDaily(s.no)); setTab("learn"); refreshProgress(s.no); };
+  const logout = () => { try { localStorage.removeItem("me"); } catch (e) {} setMe(null); setProgress({}); setDaily(emptyDaily()); setPlaying(null); setTab("learn"); };
 
   const onFinish = async (r) => {
     const acc = Math.round(r.correct / r.total * 100);
-    setProgress(applyResult(playing.id, acc)); // 최고기록·메달·잠금해제 즉시 반영
-    setDaily(bumpDaily(acc)); // 오늘의 추천 진행 + 정답률 기록
+    setProgress(applyResult(me.no, playing.id, acc)); // 계정별 최고기록·메달·잠금해제 즉시 반영
+    setDaily(bumpDaily(me.no, acc)); // 오늘의 추천 진행 + 정답률 기록
     const payload = { no: me.no, name: me.name, stageId: playing.id, stageName: playing.name, correct: r.correct, total: r.total, seconds: r.seconds };
     setPlaying(null); setTab("me");
     await api.logSet(payload); // 오프라인이면 자동 큐
-    refreshProgress();
+    refreshProgress(me.no);
   };
 
-  if (!me) return <Shell><SelectScreen onPick={choose} /></Shell>;
+  if (!me) return <Shell><Login onLogin={login} /></Shell>;
   if (playing) return <Shell><Player stage={playing} onExit={() => setPlaying(null)} onDone={onFinish} /></Shell>;
 
   return (
@@ -279,7 +291,7 @@ function App() {
           <div style={{ fontSize: 18, fontWeight: 900, color: C.ink }}>달무티 수학</div>
           <div style={{ fontSize: 12, color: C.sub, fontWeight: 600 }}>{me.no}번 {me.name}</div>
         </div>
-        <button onClick={clearMe} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 9, padding: "6px 10px", fontSize: 12.5, fontWeight: 700, color: C.sub, cursor: "pointer" }}>← 바꾸기</button>
+        <button onClick={logout} style={{ background: "none", border: `1px solid ${C.line}`, borderRadius: 9, padding: "6px 10px", fontSize: 12.5, fontWeight: 700, color: C.sub, cursor: "pointer" }}>로그아웃</button>
       </div>
       <div style={{ display: "flex", background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 4, gap: 4, marginBottom: 14 }}>
         {[["learn", "학습"], ["me", "내 학습판"], ["class", "우리 반"]].map(([k, t]) => (
@@ -290,32 +302,64 @@ function App() {
       {tab === "me" && <MeScreen no={me.no} />}
       {tab === "class" && <ClassScreen meNo={me.no} />}
 
-      <div style={{ textAlign: "center", marginTop: 18, fontSize: 11, color: C.line, fontWeight: 600 }}>달무티 수학 · 갈담초 5학년{api.on() ? "" : " · (백엔드 미연결 — 학습 기록은 저장만 됩니다)"}</div>
+      <div style={{ textAlign: "center", marginTop: 18, fontSize: 11, color: C.line, fontWeight: 600 }}>달무티 수학 {APP_VERSION} · 갈담초 5학년{api.on() ? "" : " · (백엔드 미연결 — 학습 기록은 저장만 됩니다)"}</div>
     </Shell>
   );
 }
 
 /* ─────────── 첫 화면: 학생 선택 ─────────── */
-function SelectScreen({ onPick }) {
+/* ─────────── 로그인: 이름 선택 → PIN ─────────── */
+function Login({ onLogin }) {
   const [list, setList] = useState(null);
+  const [sel, setSel] = useState(null);
+  const [pin, setPin] = useState("");
+  const [err, setErr] = useState("");
   useEffect(() => { (async () => {
     if (api.on()) { try { const r = await api.getRoster(); if (r && r.length) { setList(r); return; } } catch (e) {} }
     setList(Array.from({ length: 18 }, (_, i) => ({ no: i + 1, name: `${i + 1}번` })));
   })(); }, []);
-  return (
-    <>
-      <div style={{ textAlign: "center", margin: "10px 0 22px" }}>
-        <div style={{ width: 56, height: 56, borderRadius: 16, background: C.brand, display: "inline-grid", placeItems: "center", color: "#fff", fontSize: 27, fontWeight: 900, marginBottom: 10 }}>달</div>
-        <div style={{ fontSize: 23, fontWeight: 900, color: C.ink }}>달무티 수학</div>
-        <div style={{ fontSize: 14, color: C.sub, fontWeight: 600, marginTop: 4 }}>갈담초 5학년 · 나를 선택하세요</div>
-      </div>
+  const pick = (s) => { setSel(s); setPin(""); setErr(""); };
+  const existing = sel ? getPin(sel.no) : null;
+  const press = (k) => { setErr(""); setPin((v) => k === "del" ? v.slice(0, -1) : (v.length >= 4 ? v : v + k)); };
+  const submit = () => {
+    if (pin.length !== 4) { setErr("숫자 4자리를 입력하세요"); return; }
+    if (existing == null) { savePin(sel.no, pin); onLogin(sel); return; }
+    if (pin === existing) onLogin(sel); else { setErr("비밀번호가 달라요"); setPin(""); }
+  };
+  const forgot = () => { if (window.confirm("비밀번호를 새로 정할까요? (학습 기록은 서버에서 다시 불러와요)")) { resetAccount(sel.no); setPin(""); setErr(""); setSel({ ...sel }); } };
+  const Header = () => (
+    <div style={{ textAlign: "center", margin: "10px 0 22px" }}>
+      <div style={{ width: 56, height: 56, borderRadius: 16, background: C.brand, display: "inline-grid", placeItems: "center", color: "#fff", fontSize: 27, fontWeight: 900, marginBottom: 10 }}>달</div>
+      <div style={{ fontSize: 23, fontWeight: 900, color: C.ink }}>달무티 수학</div>
+      <div style={{ fontSize: 14, color: C.sub, fontWeight: 600, marginTop: 4 }}>{sel ? `${sel.no}번 ${sel.name}` : "갈담초 5학년 · 나를 선택하세요"}</div>
+      <div style={{ fontSize: 11, color: C.line, fontWeight: 700, marginTop: 8, letterSpacing: .2 }}>달무티 수학 {APP_VERSION} · {APP_DATE}{APP_NOTE ? ` · ${APP_NOTE}` : ""}</div>
+    </div>
+  );
+  if (!sel) return (
+    <><Header />
       {!list ? <Loading /> :
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10 }}>
           {list.map((s) => (
-            <button key={s.no} onClick={() => onPick(s)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 12px", cursor: "pointer", textAlign: "center", fontSize: 16, fontWeight: 800, color: C.ink }}>{s.no}번 {s.name}</button>))}
+            <button key={s.no} onClick={() => pick(s)} style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: "16px 12px", cursor: "pointer", textAlign: "center", fontSize: 16, fontWeight: 800, color: C.ink }}>{s.no}번 {s.name}</button>))}
         </div>}
-    </>
-  );
+    </>);
+  const keypad = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"];
+  return (
+    <div style={{ maxWidth: 320, margin: "0 auto" }}>
+      <Header />
+      <div style={{ textAlign: "center", fontSize: 14, fontWeight: 800, color: C.ink, marginBottom: 4 }}>{existing == null ? "처음이에요 — 비밀번호 4자리를 정해요" : "비밀번호 4자리를 입력해요"}</div>
+      <div style={{ textAlign: "center", fontSize: 12, color: C.sub, fontWeight: 600, marginBottom: 16 }}>{existing == null ? "다음부터 이 번호로 로그인해요" : "나만 아는 숫자 4자리"}</div>
+      <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 6 }}>{[0, 1, 2, 3].map((i) => <span key={i} style={{ width: 16, height: 16, borderRadius: "50%", background: i < pin.length ? C.brand : C.line }} />)}</div>
+      <div style={{ textAlign: "center", height: 20, fontSize: 13, fontWeight: 800, color: C.no, marginBottom: 10 }}>{err}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 }}>
+        {keypad.map((k, i) => k === "" ? <span key={i} /> : <button key={i} onClick={() => press(k)} style={{ padding: "15px 0", fontSize: 21, fontWeight: 800, borderRadius: 14, cursor: "pointer", color: k === "del" ? C.no : C.ink, background: C.key, border: `1px solid ${C.keyLine}`, fontVariantNumeric: "tabular-nums" }}>{k === "del" ? "⌫" : k}</button>)}
+      </div>
+      <button onClick={submit} style={{ width: "100%", padding: "14px 0", fontSize: 16, fontWeight: 800, borderRadius: 14, cursor: "pointer", color: "#fff", background: C.brand, border: "none", marginBottom: 10 }}>{existing == null ? "시작하기" : "로그인"}</button>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <button onClick={() => { setSel(null); setPin(""); setErr(""); }} style={{ background: "none", border: "none", color: C.sub, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>‹ 이름 다시 선택</button>
+        {existing != null && <button onClick={forgot} style={{ background: "none", border: "none", color: C.sub, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>비밀번호를 잊었어요</button>}
+      </div>
+    </div>);
 }
 
 /* ─────────── 학습: 단계 선택 ─────────── */
@@ -370,6 +414,7 @@ function Node({ stage, pr, unlocked, cleared, current, color, dx, onStart }) {
         {pr && pr.medal && pr.medal !== "none" && <span style={{ position: "absolute", right: -7, bottom: -7 }}><Medal kind={pr.medal} s={26} /></span>}
       </button>
       <div style={{ fontSize: 12.5, fontWeight: 800, color: unlocked ? C.ink : C.sub, textAlign: "center", maxWidth: 130, lineHeight: 1.25 }}>{stage.name}</div>
+      {pr && pr.plays > 0 && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.sub }}>{pr.plays}회 반복</span>}
       {current && <span style={{ fontSize: 11, fontWeight: 800, color: color }}>여기서 시작!</span>}
     </div>
   );
@@ -457,7 +502,7 @@ function Player({ stage, onExit, onDone }) {
       else ok = parseInt(vals.a, 10) === p.ans;
     }
     const sec = (Date.now() - probRef.current) / 1000;
-    const tier = ok ? speedTier(sec) : null;
+    const tier = ok ? speedTier(sec, stage, p) : null;
     if (ok) { setSpeedXP((x) => x + SPEED[tier].xp); setFlash(tier); }
     const nm = [...marks, ok]; setMarks(nm); const ns = [...speeds, tier]; setSpeeds(ns);
     setFeedback(ok ? "ok" : "no"); lockRef.current = true;
@@ -563,29 +608,22 @@ function ClassScreen({ meNo }) {
   const [d, setD] = useState(undefined);
   useEffect(() => { (async () => { if (!api.on()) { setD(null); return; } try { setD(await api.getClass()); } catch (e) { setD(null); } })(); }, []);
   if (d === undefined) return <Loading />;
-  if (!d) return <Note kind="warn">반 순위를 보려면 백엔드 연결이 필요합니다. (배포 가이드 4단계 참고)</Note>;
-  const s = d.summary, list = d.students || [];
+  if (!d) return <Note kind="warn">우리 반 현황을 보려면 백엔드 연결이 필요합니다. (배포 가이드 4단계 참고)</Note>;
+  const s = d.summary, list = (d.students || []).slice().sort((a, b) => a.no - b.no); // 번호순 — 등수 아님
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 14 }}>
-        <Summary v={s.dalmuti} l="이번 주 달무티" c={C.goldDk} />
-        <Summary v={`${km(s.weeklyTotal)}P`} l="반 이번 주 성장 합계" c={C.brand} />
-        <Summary v={`${s.studiedToday}/${s.count}`} l="오늘 학습한 학생" c={C.blue} />
+        <Summary v={`${s.studiedToday}/${s.count}`} l="오늘 함께한 친구" c={C.brand} />
+        <Summary v={`${km(s.weeklyTotal)}P`} l="우리 반이 함께 모은 힘" c={C.goldDk} />
       </div>
-      <Card title="이번 주 성장 랭킹 · 달무티 계급" accent={C.gold}>
-        <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginBottom: 10, lineHeight: 1.5 }}>누적이 아니라 <b style={{ color: C.brandDk }}>이번 주에 얼마나 성장했는가</b>로 줄을 세웁니다. 매주 월요일 계급이 새로 정해져요.</div>
-        <div style={{ overflowX: "auto" }}><div style={{ minWidth: 480 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "40px 1.3fr 1fr 1.1fr 0.8fr", padding: "8px 8px", background: C.brandSoft, borderRadius: 9, fontSize: 12, fontWeight: 800, color: C.brandDk }}>
-            <span>순위</span><span>학생</span><span style={{ textAlign: "right" }}>이번 주 성장</span><span style={{ textAlign: "center" }}>계급</span><span style={{ textAlign: "right" }}>정확도</span></div>
-          {list.map((b) => { const mine = b.no === meNo; return (
-            <div key={b.no} style={{ display: "grid", gridTemplateColumns: "40px 1.3fr 1fr 1.1fr 0.8fr", alignItems: "center", padding: "10px 8px", borderTop: `1px solid ${C.line}`, background: mine ? C.goldSoft : "transparent", borderRadius: mine ? 9 : 0, fontVariantNumeric: "tabular-nums" }}>
-              <span style={{ fontWeight: 900, color: b.pos < 3 ? C.goldDk : C.sub, fontSize: 14 }}>{b.pos + 1}</span>
-              <span style={{ fontWeight: mine ? 900 : 700, color: C.ink, fontSize: 13.5 }}>{b.no}번 {b.name}{mine ? " (나)" : ""}</span>
-              <span style={{ textAlign: "right", fontWeight: 900, color: C.goldDk, fontSize: 14 }}>{km(b.weekly)}P</span>
-              <span style={{ textAlign: "center" }}><Badge title={b.title} /></span>
-              <span style={{ textAlign: "right", fontWeight: 800, color: C.ok, fontSize: 13.5 }}>{b.accuracy}%</span>
-            </div>); })}
-        </div></div>
+      <Card title="우리 반, 다 같이 오르는 중 🌱" accent={C.brand}>
+        <div style={{ fontSize: 12.5, color: C.sub, fontWeight: 700, marginBottom: 12, lineHeight: 1.55 }}>순위는 없어요. 각자 <b style={{ color: C.brandDk }}>자기 단계</b>를 차근차근 오르고, 그 힘을 우리 반이 <b style={{ color: C.brandDk }}>함께</b> 모아요.</div>
+        {list.map((b) => { const mine = b.no === meNo; return (
+          <div key={b.no} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderTop: `1px solid ${C.line}`, background: mine ? C.brandSoft : "transparent", borderRadius: mine ? 9 : 0 }}>
+            <span style={{ fontSize: 17 }}>🌱</span>
+            <span style={{ flex: 1, fontWeight: mine ? 900 : 700, color: C.ink, fontSize: 13.5 }}>{b.no}번 {b.name}{mine ? " (나)" : ""}</span>
+            <span style={{ fontSize: 12.5, fontWeight: 800, color: C.ok }}>정확도 {b.accuracy}%</span>
+          </div>); })}
       </Card>
     </>
   );
