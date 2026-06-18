@@ -1,5 +1,5 @@
 /***********************************************************************
- *  디딤돌 연산 · 백엔드 (Google Apps Script + 스프레드시트)
+ *  달무티 수학 · 백엔드 (Google Apps Script + 스프레드시트)
  *  갈담초 5학년 · 학교 구글 계정 안에서 운영 (추가 비용 0)
  *
  *  - 학생 시트(명단) + 학습기록 시트(세트 1건당 1행)
@@ -14,15 +14,17 @@ const CONFIG = {
   TOKEN: "",                  // 보안용. 임의 문자열로 바꾸면 활성화(예: "galdam2026")
   SHEET_STUDENTS: "학생",
   SHEET_LOG: "학습기록",
-  TOTAL_STAGES: 38,
+  TOTAL_STAGES: 61,
   LEVELS: [
-    [0, "첫걸음"], [300, "디딤돌 Ⅰ"], [800, "디딤돌 Ⅱ"], [1600, "징검다리"],
+    [0, "첫걸음"], [300, "오름 Ⅰ"], [800, "오름 Ⅱ"], [1600, "징검다리"],
     [2800, "외나무다리"], [4500, "돌다리"], [7000, "구름다리"], [10000, "연산 마스터"],
   ],
   // 달무티 한국어판 13계급 (위 = 최고) — 프론트엔드와 동일
   DAL: ["달무티", "대주교", "시종장", "남작 부인", "백작", "기사", "재봉사", "석공", "요리사", "양치기", "광부", "농노", "어릿광대"],
   P_CORRECT: 1, P_SET: 5, P_PERFECT: 10, P_ATTEND: 20, P_STREAK7: 50, P_STAGE: 30,
   CLEAR_PCT: 80,   // 정확도 80% 이상이면 단계 완료(다음 단계 잠금 해제)
+  // ▼ 전부 클리어(기사) 이후 누적 점수로 백작→남작 부인→시종장→대주교→달무티. 임시값 — 한 주 데이터 보고 숫자만 조정하세요.
+  TOP_POINTS: [3000, 4500, 6500, 9000, 12000],
 };
 
 /* ─────────────────────────── 라우팅 ─────────────────────────── */
@@ -95,16 +97,36 @@ function tierOf(title) {
   if (i === 11) return "농노";
   return "어릿광대";
 }
+/* 절대(협동) 계급: 남과 비교가 아니라 '내가 깬 단계 + 누적 점수'로만 결정
+   - 아래 7계급(어릿광대→재봉사)은 클리어한 단계 수(월드 경계)로
+   - 전부 클리어(61) = 기사, 그 위 5계급은 누적 점수(TOP_POINTS)로  */
+function absRank(cleared, points) {
+  const T = CONFIG.TOTAL_STAGES;
+  if (cleared < T) {
+    const byClear = [[54, "재봉사"], [47, "석공"], [34, "요리사"], [19, "양치기"], [9, "광부"], [1, "농노"], [0, "어릿광대"]];
+    for (let i = 0; i < byClear.length; i++) if (cleared >= byClear[i][0]) return byClear[i][1];
+    return "어릿광대";
+  }
+  const P = CONFIG.TOP_POINTS; // [백작, 남작 부인, 시종장, 대주교, 달무티] 오름차순
+  if (points >= P[4]) return "달무티";
+  if (points >= P[3]) return "대주교";
+  if (points >= P[2]) return "시종장";
+  if (points >= P[1]) return "남작 부인";
+  if (points >= P[0]) return "백작";
+  return "기사";
+}
 
 /* ─────────────────────── 집계 엔진 ─────────────────────── */
 function computeStudentStats(recs, todayStr) {
   recs = recs.slice().sort((a, b) => a.ts - b.ts);
   const base = { sets: 0, problems: 0, correct: 0, perfectSets: 0, perfectRate: 0, accuracy: 0,
-    days: 0, c30: 0, dilig: 0, streak: 0, stages: 0, points: 0, level: levelOf(0), recent: [], sets30: 0, prob30: 0 };
+    days: 0, c30: 0, dilig: 0, streak: 0, stages: 0, clearedStages: 0, points: 0, level: levelOf(0), recent: [], sets30: 0, prob30: 0 };
   if (!recs.length) return base;
   let problems = 0, correct = 0, perfectSets = 0;
-  const dateSet = {}, perfectStages = {};
+  const dateSet = {}, perfectStages = {}, bestByStage = {};
   recs.forEach(r => { problems += r.total; correct += r.correct;
+    const acc = r.total ? Math.round(r.correct / r.total * 100) : 0;
+    if (acc > (bestByStage[r.stageId] || 0)) bestByStage[r.stageId] = acc;
     if (r.perfect) { perfectSets++; perfectStages[r.stageId] = true; } dateSet[ymd(r.ts)] = true; });
   const dates = Object.keys(dateSet).sort(), dayNums = dates.map(dayNum);
   const numSet = {}; dayNums.forEach(n => numSet[n] = true);
@@ -118,13 +140,14 @@ function computeStudentStats(recs, todayStr) {
   let maxStreak = 1, run = 1;
   for (let i = 1; i < dayNums.length; i++) { run = (dayNums[i] - dayNums[i - 1] === 1) ? run + 1 : 1; if (run > maxStreak) maxStreak = run; }
   const sets = recs.length, stages = Object.keys(perfectStages).length;
+  const clearedStages = Object.keys(bestByStage).filter(id => bestByStage[id] >= CONFIG.CLEAR_PCT).length;
   const perfectRate = Math.round(perfectSets / sets * 100), accuracy = Math.round(correct / problems * 100);
   const points = correct * CONFIG.P_CORRECT + sets * CONFIG.P_SET + perfectSets * CONFIG.P_PERFECT
     + days * CONFIG.P_ATTEND + Math.floor(maxStreak / 7) * CONFIG.P_STREAK7 + stages * CONFIG.P_STAGE;
   const recent = recs.slice(-5).reverse().map(r => ({ stageName: r.stageName, correct: r.correct, total: r.total,
     perfect: r.perfect, points: r.setPoints, date: ymd(r.ts) }));
   return { sets, problems, correct, perfectSets, perfectRate, accuracy, days, c30, dilig,
-    streak, maxStreak, stages, points, level: levelOf(points), recent, sets30, prob30 };
+    streak, maxStreak, stages, clearedStages, points, level: levelOf(points), recent, sets30, prob30 };
 }
 
 /* 주간 성장(이번 주 setPoints 합) → 달무티 계급 순위 */
@@ -144,11 +167,11 @@ function rankClass(roster, allRecs, weekStr) {
 function buildDashboard(no) {
   const roster = readRoster(), all = readRecords(), week = isoWeek(new Date());
   const me = roster.find(s => s.no === no) || { no, name: "?" };
-  const stats = computeStudentStats(all.filter(r => r.no === no), ymd(new Date()));
-  const r = rankClass(roster, all, week).byNo[no] ||
-    { weekly: 0, title: rankTitle(roster.length - 1, roster.length), tier: "어릿광대", pos: roster.length - 1 };
+  const mine = all.filter(r => r.no === no);
+  const stats = computeStudentStats(mine, ymd(new Date()));
+  const title = absRank(stats.clearedStages, stats.points), tier = tierOf(title);
   return Object.assign({ no: me.no, name: me.name, totalStages: CONFIG.TOTAL_STAGES, week,
-    weekly: r.weekly, title: r.title, tier: r.tier, pos: r.pos, classSize: roster.length }, stats);
+    weekly: weeklyGrowth(mine, week), title: title, tier: tier, classSize: roster.length }, stats);
 }
 function buildClass() {
   const roster = readRoster(), all = readRecords(), week = isoWeek(new Date()), today = ymd(new Date());
@@ -174,15 +197,16 @@ function buildProgress(no) {
   const byStage = {};
   recs.forEach(r => {
     const acc = r.total ? Math.round(r.correct / r.total * 100) : 0;
-    const cur = byStage[r.stageId] || { best: 0 };
+    const cur = byStage[r.stageId] || { best: 0, plays: 0 };
     if (acc > cur.best) cur.best = acc;
+    cur.plays += 1; // 그 단계를 푼 세트 수 = 반복 횟수
     byStage[r.stageId] = cur;
   });
   Object.keys(byStage).forEach(id => {
-    const b = byStage[id].best;
-    byStage[id] = { best: b, medal: medalOf(b), cleared: b >= CONFIG.CLEAR_PCT };
+    const e = byStage[id];
+    byStage[id] = { best: e.best, medal: medalOf(e.best), cleared: e.best >= CONFIG.CLEAR_PCT, plays: e.plays };
   });
-  return { byStage };
+  return byStage; // ← 맵을 그대로 반환 (프론트 mergeProgress 형식과 일치)
 }
 
 /* ─────────────────────── 쓰기: 세트 기록 ─────────────────────── */
